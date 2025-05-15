@@ -1,33 +1,17 @@
 {
-  "name": "worst-generation-client",
+  "name": "worst-gen-chat-server",
   "version": "1.0.0",
-  "description": "Terminal client for Worst Generation encrypted chat",
-  "main": "worst-gen-client.js",
-  "bin": {
-    "worst-gen": "./worst-gen-client.js"
-  },
+  "main": "server.js",
   "scripts": {
-    "start": "node worst-gen-client.js"
+    "start": "node server.js"
   },
-  "keywords": [
-    "chat",
-    "client",
-    "encryption",
-    "terminal",
-    "hacker"
-  ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
-    "boxen": "^7.1.0",
-    "chalk": "^4.1.2",
-    "figlet": "^1.6.0",
-    "gradient-string": "^2.0.2",
-    "ora": "^5.4.1",
-    "socket.io-client": "^4.6.0",
-    "yargs": "^17.7.2"
-  },
-  "engines": {
-    "node": ">=14.0.0"
+    "express": "^4.x",
+    "socket.io": "^4.x",
+    "mongoose": "^7.x",
+    "dotenv": "^16.x",
+    "blessed": "^0.1.x",
+    "blessed-contrib": "^4.x",
+    "figlet": "^1.x"
   }
 }
