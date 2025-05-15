@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const crypto = require('crypto');
-const mongoose = require('mongoose');
+const { CronJob } = require('cron');
 
 // Server Config
 const app = express();
@@ -10,131 +10,117 @@ const server = http.createServer(app);
 const io = socketIo(server);
 const PORT = process.env.PORT || 3000;
 
-// Hardcoded keys and MongoDB URI
+// Hardcoded server key
 const SERVER_KEY = 'the7e8902f5d6b3a1c94d0eaf28b61538c7e9a0f4d2b8c5a7e3f6d9b0c2a5e7d8f1';
-const DATABASE_URL = 'mongodb+srv://0XAP0R41:LOSTINTHECIPHEROFDOUBT@worst-gen-gc.1nt8beb.mongodb.net/worst-generation?retryWrites=true&w=majority';
 
-// Connect to MongoDB
-mongoose.connect(DATABASE_URL, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  tls: true,
-  tlsAllowInvalidCertificates: true, // This bypasses SSL validation temporarily
-});
+// In-Memory Storage
+let users = {};
+let chatHistory = [];
 
-const db = mongoose.connection;
-db.on('error', (err) => {
-  console.error('MongoDB connection error:', err);
-});
-db.once('open', () => {
-  console.log('Connected to MongoDB database');
-});
+// Reset chat history at midnight (12 AM Philippines Time - UTC+8)
+const resetChatHistory = new CronJob(
+  '0 0 * * *',
+  () => {
+    console.log('[RESET] Clearing chat history and user list at midnight PH time');
+    chatHistory = [];
+    users = {};
+    io.to('chat-room').emit('system-message', { content: 'Chat history has been reset.' });
+  },
+  null,
+  true,
+  'Asia/Manila'
+);
 
-// Define Schemas
-const MemberSchema = new mongoose.Schema({
-  alias: { type: String, required: true, unique: true },
-  publicKey: { type: String, required: true },
-  joinedAt: { type: Date, default: Date.now },
-});
+resetChatHistory.start();
 
-const MessageSchema = new mongoose.Schema({
-  sender: { type: String, required: true },
-  content: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now },
-});
-
-const Member = mongoose.model('Member', MemberSchema);
-const Message = mongoose.model('Message', MessageSchema);
+// Helper to format timestamp
+const formatTimestamp = (date) => {
+  return new Date(date).toLocaleTimeString('en-PH', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Manila',
+  });
+};
 
 // Socket.io Connection
 io.on('connection', (socket) => {
   let currentUser = null;
 
   // Registration
-  socket.on('register', async (data) => {
-    try {
-      if (data.registrationKey !== SERVER_KEY) {
-        socket.emit('error', { message: 'Invalid registration key' });
-        return;
-      }
-
-      const existingMember = await Member.findOne({ alias: data.alias });
-      if (existingMember) {
-        socket.emit('error', { message: 'Alias already taken' });
-        return;
-      }
-
-      const newMember = new Member({
-        alias: data.alias,
-        publicKey: data.publicKey,
-      });
-
-      await newMember.save();
-      currentUser = data.alias;
-      socket.join('chat-room');
-      socket.emit('registered', { success: true, message: `Welcome, ${data.alias}!` });
-    } catch (error) {
-      console.error('Registration error:', error);
-      socket.emit('error', { message: 'Registration failed' });
+  socket.on('register', (data) => {
+    if (data.registrationKey !== SERVER_KEY) {
+      socket.emit('error', { message: 'Invalid registration key' });
+      return;
     }
+
+    if (users[data.alias]) {
+      socket.emit('error', { message: 'Alias already taken' });
+      return;
+    }
+
+    currentUser = data.alias;
+    users[currentUser] = socket.id;
+
+    socket.join('chat-room');
+    socket.emit('registered', { success: true, message: `Welcome, ${data.alias}!` });
+    console.log(`[+] ${data.alias} joined the chat`);
+
+    // Broadcast to other users
+    socket.to('chat-room').emit('user-joined', { alias: currentUser });
   });
 
   // Login
-  socket.on('login', async (data) => {
-    try {
-      const member = await Member.findOne({ alias: data.alias });
-      if (!member) {
-        socket.emit('error', { message: 'Unknown alias' });
-        return;
-      }
-
-      currentUser = data.alias;
-      socket.join('chat-room');
-
-      const recentMessages = await Message.find().sort({ timestamp: -1 }).limit(50).lean();
-      socket.emit('login-success', {
-        success: true,
-        alias: data.alias,
-        history: recentMessages.reverse(),
-      });
-    } catch (error) {
-      console.error('Login error:', error);
-      socket.emit('error', { message: 'Login failed' });
+  socket.on('login', (data) => {
+    if (!users[data.alias]) {
+      socket.emit('error', { message: 'Unknown alias' });
+      return;
     }
+
+    currentUser = data.alias;
+    socket.join('chat-room');
+    socket.emit('login-success', {
+      success: true,
+      alias: currentUser,
+      history: chatHistory,
+    });
+
+    console.log(`[+] ${currentUser} logged in`);
+    socket.to('chat-room').emit('user-joined', { alias: currentUser });
   });
 
   // Send Message
-  socket.on('message', async (data) => {
-    try {
-      if (!currentUser) {
-        socket.emit('error', { message: 'Not authenticated' });
-        return;
-      }
-
-      const message = new Message({
-        sender: currentUser,
-        content: data.content,
-      });
-
-      await message.save();
-      io.to('chat-room').emit('message', {
-        sender: currentUser,
-        content: data.content,
-        timestamp: message.timestamp,
-      });
-    } catch (error) {
-      console.error('Message error:', error);
-      socket.emit('error', { message: 'Message failed' });
+  socket.on('message', (data) => {
+    if (!currentUser) {
+      socket.emit('error', { message: 'Not authenticated' });
+      return;
     }
+
+    const timestamp = formatTimestamp(new Date());
+    const formattedMessage = `${timestamp} - ${currentUser}: ${data.content}`;
+
+    const message = {
+      sender: currentUser,
+      content: formattedMessage,
+      timestamp: timestamp,
+    };
+
+    // Add to chat history
+    chatHistory.push(message);
+
+    // Limit history to last 100 messages
+    if (chatHistory.length > 100) chatHistory.shift();
+
+    io.to('chat-room').emit('message', message);
   });
 
   // Disconnect
   socket.on('disconnect', () => {
     if (currentUser) {
-      io.to('chat-room').emit('user-left', {
-        alias: currentUser,
-        timestamp: new Date(),
-      });
+      delete users[currentUser];
+      console.log(`[-] ${currentUser} left the chat`);
+      socket.to('chat-room').emit('user-left', { alias: currentUser });
     }
   });
 });
