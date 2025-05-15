@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const readline = require('readline');
 
 // Server URL
-const SERVER_URL = 'https://your-render-url.com';
+const SERVER_URL = 'https://worst-gen.onrender.com';
 const SERVER_KEY = '7e8902f5d6b3a1c94d0eaf28b61538c7e9a0f4d2b8c5a7e3f6d9b0c2a5e7d8f1';
 
 // Create socket connection
