@@ -1,193 +1,128 @@
-// server.js - Hacker Red Themed Terminal Group Chat Server
-
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
+const socketIo = require('socket.io');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
-const dotenv = require('dotenv');
-const blessed = require('blessed');
-const contrib = require('blessed-contrib');
-const figlet = require('figlet');
 
-dotenv.config();
-
-const PORT = process.env.PORT || 3000;
-const AUTH_KEY = "the7e8902f5d6b3a1c94d0eaf28b61538c7e9a0f4d2b8c5a7e3f6d9b0c2a5e7d8f1";
-const MONGO_URI = process.env.MONGO_URI;
-
+// Server setup
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = socketIo(server);
+const PORT = process.env.PORT || 3000;
 
-// Connect to MongoDB
-mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => logToUI('{bold}{red-fg}MongoDB connected{/red-fg}{/bold}'))
-  .catch(err => logToUI(`{bold}{red-fg}MongoDB connection error: ${err}{/red-fg}{/bold}`));
+// Load env vars
+const SERVER_KEY = process.env.SERVER_KEY || 'the7e8902f5d6b3a1c94d0eaf28b61538c7e9a0f4d2b8c5a7e3f6d9b0c2a5e7d8f1';
+const DATABASE_URL = process.env.MONGODB_URI || 'mongodb://localhost:27017/worst-generation';
 
-// MongoDB schema
-const chatSchema = new mongoose.Schema({
-  alias: String,
-  msg: String,
+// MongoDB connection
+mongoose.connect(DATABASE_URL, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+});
+const db = mongoose.connection;
+db.on('error', console.error.bind(console, 'MongoDB connection error:'));
+db.once('open', () => console.log('Connected to MongoDB'));
+
+// Schemas
+const MemberSchema = new mongoose.Schema({
+  alias: { type: String, required: true, unique: true },
+  publicKey: { type: String, required: true },
+  joinedAt: { type: Date, default: Date.now }
+});
+
+const MessageSchema = new mongoose.Schema({
+  sender: { type: String, required: true },
+  encryptedContent: { type: String, required: true },
+  iv: { type: String, required: true },
   timestamp: { type: Date, default: Date.now }
 });
 
-const ChatMessage = mongoose.model('ChatMessage', chatSchema);
+const Member = mongoose.model('Member', MemberSchema);
+const Message = mongoose.model('Message', MessageSchema);
 
-// ===== Blessed Screen Setup =====
-const screen = blessed.screen({
-  smartCSR: true,
-  title: 'WORST GENERATION - Terminal Group Chat Server',
-  dockBorders: true,
-  style: {
-    bg: 'black'
-  }
-});
-
-// Render WORST GENERATION ASCII Banner on top
-const bannerText = figlet.textSync('WORST GENERATION', { 
-  font: 'Big',
-  horizontalLayout: 'default',
-  verticalLayout: 'default',
-  width: 100,
-  whitespaceBreak: true
-});
-
-const banner = blessed.box({
-  top: 0,
-  left: 'center',
-  width: '100%',
-  height: 7,
-  content: bannerText,
-  tags: true,
-  style: {
-    fg: 'red',
-    bg: 'black',
-  },
-  align: 'center',
-  valign: 'middle'
-});
-screen.append(banner);
-
-// Grid Layout (9 rows below banner)
-const grid = new contrib.grid({rows: 9, cols: 12, screen: screen});
-
-// Chat log panel (8 rows x 9 cols)
-const chatLog = grid.set(0, 0, 8, 9, blessed.log, {
-  label: '{red-fg} Chat Log {/red-fg}',
-  tags: true,
-  border: {type: 'line'},
-  style: {
-    fg: 'white',
-    bg: 'black',
-    border: { fg: 'red' },
-    scrollbar: { bg: 'red' }
-  },
-  scrollable: true,
-  alwaysScroll: true,
-  scrollbar: {
-    ch: ' ',
-    inverse: true
-  }
-});
-
-// Connected users list (8 rows x 3 cols)
-const usersList = grid.set(0, 9, 8, 3, blessed.list, {
-  label: '{red-fg} Connected Users {/red-fg}',
-  tags: true,
-  border: {type: 'line'},
-  style: {
-    fg: 'red',
-    bg: 'black',
-    selected: { bg: 'red', fg: 'black' },
-    border: { fg: 'red' }
-  },
-  keys: true,
-  vi: true,
-  mouse: true,
-  interactive: true,
-});
-
-// Server stats box (1 row full width below)
-const statsBox = grid.set(8, 0, 1, 12, blessed.box, {
-  label: '{red-fg} Server Stats {/red-fg}',
-  tags: true,
-  style: {
-    fg: 'red',
-    bg: 'black',
-    border: { fg: 'red' }
-  },
-  border: { type: 'line' },
-  content: '',
-  height: 1
-});
-
-screen.key(['escape', 'q', 'C-c'], () => {
-  logToUI('{red-fg}Server shutting down...{/red-fg}');
-  process.exit(0);
-});
-
-screen.render();
-
-// Utility function to log chat messages to UI
-function logToUI(text) {
-  chatLog.log(text);
-  screen.render();
-}
-
-// ===== Chat Server Logic =====
-const users = new Map();  // alias => socket.id
-let totalMessages = 0;
-
-function updateUsersUI() {
-  const userAliases = Array.from(users.keys()).sort();
-  usersList.setItems(userAliases);
-  screen.render();
-}
-
-function updateStats() {
-  statsBox.setContent(
-    `{bold}Users:{/bold} ${users.size}  |  {bold}Total Messages:{/bold} ${totalMessages}`
-  );
-  screen.render();
-}
-
-io.use((socket, next) => {
-  const { key, alias } = socket.handshake.query;
-  if (key !== AUTH_KEY) return next(new Error('Invalid key'));
-  if (!alias || users.has(alias)) return next(new Error('Invalid or duplicate alias'));
-  socket.alias = alias;
-  next();
-});
-
+// Socket.io logic
 io.on('connection', async (socket) => {
-  users.set(socket.alias, socket.id);
-  updateUsersUI();
-  logToUI(`{green-fg}[+] {bold}${socket.alias}{/bold} connected{/green-fg}`);
-  updateStats();
+  let currentUser = null;
 
-  // Send past messages (limit 50)
-  const pastMessages = await ChatMessage.find().sort({ timestamp: -1 }).limit(50).lean();
-  socket.emit('pastMessages', pastMessages.reverse());
+  socket.on('register', async (data) => {
+    try {
+      if (data.registrationKey !== SERVER_KEY) {
+        socket.emit('error', { message: 'Invalid registration key' });
+        return;
+      }
+      const existingMember = await Member.findOne({ alias: data.alias });
+      if (existingMember) {
+        socket.emit('error', { message: 'Alias already taken' });
+        return;
+      }
+      const newMember = new Member({ alias: data.alias, publicKey: data.publicKey });
+      await newMember.save();
+      currentUser = data.alias;
+      socket.join('chat-room');
+      socket.emit('registered', { success: true, message: `Welcome to Worst Generation, ${data.alias}!` });
+      socket.to('chat-room').emit('user-joined', { alias: data.alias, timestamp: new Date() });
+    } catch (err) {
+      console.error('Registration error:', err);
+      socket.emit('error', { message: 'Registration failed' });
+    }
+  });
 
-  socket.on('message', async (msg) => {
-    totalMessages++;
-    const cleanMsg = msg.toString().substring(0, 1000); // limit message length
-    const chatMessage = new ChatMessage({ alias: socket.alias, msg: cleanMsg });
-    await chatMessage.save();
-    const formattedMsg = `{red-fg}[${socket.alias}]{/red-fg}: ${cleanMsg}`;
-    logToUI(formattedMsg);
-    io.emit('message', { alias: socket.alias, msg: cleanMsg });
-    updateStats();
+  socket.on('login', async (data) => {
+    try {
+      const member = await Member.findOne({ alias: data.alias });
+      if (!member) {
+        socket.emit('error', { message: 'Unknown alias' });
+        return;
+      }
+      currentUser = data.alias;
+      socket.join('chat-room');
+      const recentMessages = await Message.find().sort({ timestamp: -1 }).limit(50).lean();
+      socket.emit('login-success', { success: true, alias: data.alias, history: recentMessages.reverse() });
+      socket.to('chat-room').emit('user-joined', { alias: data.alias, timestamp: new Date() });
+    } catch (err) {
+      console.error('Login error:', err);
+      socket.emit('error', { message: 'Login failed' });
+    }
+  });
+
+  socket.on('message', async (data) => {
+    try {
+      if (!currentUser) {
+        socket.emit('error', { message: 'Not authenticated' });
+        return;
+      }
+      const message = new Message({
+        sender: currentUser,
+        encryptedContent: data.encryptedContent,
+        iv: data.iv
+      });
+      await message.save();
+      io.to('chat-room').emit('message', {
+        id: message._id,
+        sender: currentUser,
+        encryptedContent: data.encryptedContent,
+        iv: data.iv,
+        timestamp: message.timestamp
+      });
+    } catch (err) {
+      console.error('Message error:', err);
+      socket.emit('error', { message: 'Failed to send message' });
+    }
   });
 
   socket.on('disconnect', () => {
-    users.delete(socket.alias);
-    updateUsersUI();
-    logToUI(`{yellow-fg}[-] {bold}${socket.alias}{/bold} disconnected{/yellow-fg}`);
-    updateStats();
+    if (currentUser) {
+      socket.to('chat-room').emit('user-left', { alias: currentUser, timestamp: new Date() });
+    }
   });
 });
 
+// Basic routes
+app.get('/', (req, res) => res.send('Worst Generation Chat Server Running'));
+
+app.get('/health', (req, res) => res.status(200).json({ status: 'up' }));
+
+// Start server
 server.listen(PORT, () => {
-  logToUI(`{bold}{red-fg}Server running on port ${PORT}{/red-fg}{/bold}`);
+  console.log(`Worst Generation server running on port ${PORT}`);
 });
