@@ -11,8 +11,8 @@ const io = socketIo(server);
 const PORT = process.env.PORT || 3000;
 
 // Load env vars
-const SERVER_KEY = process.env.SERVER_KEY || 'the7e8902f5d6b3a1c94d0eaf28b61538c7e9a0f4d2b8c5a7e3f6d9b0c2a5e7d8f1';
-const DATABASE_URL = process.env.MONGODB_URI || 'mongodb://localhost:27017/worst-generation';
+const SERVER_KEY = 'the7e8902f5d6b3a1c94d0eaf28b61538c7e9a0f4d2b8c5a7e3f6d9b0c2a5e7d8f1';
+const DATABASE_URL = 'mongodb+srv://0XAP0R41:6oJuaT0DBWRl61Bg@worst-gen-gc.1nt8beb.mongodb.net/?retryWrites=true&w=majority&appName=worst-gen-gc';
 
 // MongoDB connection
 mongoose.connect(DATABASE_URL, {
