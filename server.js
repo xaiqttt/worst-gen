@@ -10,16 +10,16 @@ const server = http.createServer(app);
 const io = socketIo(server);
 const PORT = process.env.PORT || 3000;
 
-// Hardcoded keys and DB URI
+// Hardcoded keys and MongoDB URI
 const SERVER_KEY = 'the7e8902f5d6b3a1c94d0eaf28b61538c7e9a0f4d2b8c5a7e3f6d9b0c2a5e7d8f1';
-const DATABASE_URL = 'mongodb+srv://0XAP0R41:LOSTINTHECIPHEROFDOUBT@worst-gen-gc.1nt8beb.mongodb.net/worst-generation?retryWrites=true&w=majority&tls=true&tlsInsecure=true';
+const DATABASE_URL = 'mongodb+srv://0XAP0R41:LOSTINTHECIPHEROFDOUBT@worst-gen-gc.1nt8beb.mongodb.net/worst-generation?retryWrites=true&w=majority';
 
-// Connect to MongoDB with TLS
+// Connect to MongoDB
 mongoose.connect(DATABASE_URL, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
   tls: true,
-  tlsAllowInvalidCertificates: true, // For temporary testing, set to false in production
+  tlsAllowInvalidCertificates: true, // This bypasses SSL validation temporarily
 });
 
 const db = mongoose.connection;
