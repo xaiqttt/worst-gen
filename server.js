@@ -11,15 +11,15 @@ const io = socketIo(server);
 const PORT = process.env.PORT || 3000;
 
 // Hardcoded keys and DB URI
-const SERVER_KEY = process.env.SERVER_KEY || 'the7e8902f5d6b3a1c94d0eaf28b61538c7e9a0f4d2b8c5a7e3f6d9b0c2a5e7d8f1';
-const DATABASE_URL = 'mongodb+srv://0XAP0R41:6oJuaT0DBWRl61Bg@worst-gen-gc.1nt8beb.mongodb.net/?retryWrites=true&w=majority&tls=true&appName=worst-gen-gc';
+const SERVER_KEY = 'the7e8902f5d6b3a1c94d0eaf28b61538c7e9a0f4d2b8c5a7e3f6d9b0c2a5e7d8f1';
+const DATABASE_URL = 'mongodb+srv://0XAP0R41:LOSTINTHECIPHEROFDOUBT@worst-gen-gc.1nt8beb.mongodb.net/worst-generation?retryWrites=true&w=majority&tls=true&tlsInsecure=true';
 
 // Connect to MongoDB with TLS
 mongoose.connect(DATABASE_URL, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
   tls: true,
-  tlsAllowInvalidCertificates: false,
+  tlsAllowInvalidCertificates: true, // For temporary testing, set to false in production
 });
 
 const db = mongoose.connection;
@@ -39,19 +39,18 @@ const MemberSchema = new mongoose.Schema({
 
 const MessageSchema = new mongoose.Schema({
   sender: { type: String, required: true },
-  encryptedContent: { type: String, required: true },
-  iv: { type: String, required: true },
+  content: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
 });
 
-// Models
 const Member = mongoose.model('Member', MemberSchema);
 const Message = mongoose.model('Message', MessageSchema);
 
-// Socket.io connection
-io.on('connection', async (socket) => {
+// Socket.io Connection
+io.on('connection', (socket) => {
   let currentUser = null;
 
+  // Registration
   socket.on('register', async (data) => {
     try {
       if (data.registrationKey !== SERVER_KEY) {
@@ -72,23 +71,15 @@ io.on('connection', async (socket) => {
 
       await newMember.save();
       currentUser = data.alias;
-
       socket.join('chat-room');
-      socket.emit('registered', {
-        success: true,
-        message: `Welcome to Worst Generation, ${data.alias}!`,
-      });
-
-      socket.to('chat-room').emit('user-joined', {
-        alias: data.alias,
-        timestamp: new Date(),
-      });
+      socket.emit('registered', { success: true, message: `Welcome, ${data.alias}!` });
     } catch (error) {
       console.error('Registration error:', error);
       socket.emit('error', { message: 'Registration failed' });
     }
   });
 
+  // Login
   socket.on('login', async (data) => {
     try {
       const member = await Member.findOne({ alias: data.alias });
@@ -100,20 +91,11 @@ io.on('connection', async (socket) => {
       currentUser = data.alias;
       socket.join('chat-room');
 
-      const recentMessages = await Message.find()
-        .sort({ timestamp: -1 })
-        .limit(50)
-        .lean();
-
+      const recentMessages = await Message.find().sort({ timestamp: -1 }).limit(50).lean();
       socket.emit('login-success', {
         success: true,
         alias: data.alias,
         history: recentMessages.reverse(),
-      });
-
-      socket.to('chat-room').emit('user-joined', {
-        alias: data.alias,
-        timestamp: new Date(),
       });
     } catch (error) {
       console.error('Login error:', error);
@@ -121,6 +103,7 @@ io.on('connection', async (socket) => {
     }
   });
 
+  // Send Message
   socket.on('message', async (data) => {
     try {
       if (!currentUser) {
@@ -130,28 +113,25 @@ io.on('connection', async (socket) => {
 
       const message = new Message({
         sender: currentUser,
-        encryptedContent: data.encryptedContent,
-        iv: data.iv,
+        content: data.content,
       });
 
       await message.save();
-
       io.to('chat-room').emit('message', {
-        id: message._id,
         sender: currentUser,
-        encryptedContent: data.encryptedContent,
-        iv: data.iv,
+        content: data.content,
         timestamp: message.timestamp,
       });
     } catch (error) {
       console.error('Message error:', error);
-      socket.emit('error', { message: 'Failed to send message' });
+      socket.emit('error', { message: 'Message failed' });
     }
   });
 
+  // Disconnect
   socket.on('disconnect', () => {
     if (currentUser) {
-      socket.to('chat-room').emit('user-left', {
+      io.to('chat-room').emit('user-left', {
         alias: currentUser,
         timestamp: new Date(),
       });
@@ -159,7 +139,7 @@ io.on('connection', async (socket) => {
   });
 });
 
-// Basic routes
+// Basic Routes
 app.get('/', (req, res) => {
   res.send('Worst Generation Chat Server Running');
 });
@@ -168,7 +148,7 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'up' });
 });
 
-// Start server
+// Start Server
 server.listen(PORT, () => {
   console.log(`Worst Generation server running on port ${PORT}`);
 });
